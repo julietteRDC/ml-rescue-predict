@@ -81,41 +81,8 @@ with DAG(
     catchup=False,
     tags=["jenkins", "ec2", "ml-training"],
 ) as dag:
-    # Step 1: Poll Jenkins Job Status
-    # @task
-    # def poll_jenkins_job():
-    #     """Poll Jenkins for the job status and check for successful build."""
-    #     import requests
-    #     import time
+    # Optionnal add a jenkins to verify DAG before launching an EC2 instance
 
-    #     # Step 1: Get the latest build number from the job API
-    #     job_url = f"{JENKINS_URL}/job/{JENKINS_JOB_NAME}/api/json"
-    #     response = requests.get(job_url, auth=(JENKINS_USER, JENKINS_TOKEN))
-    #     if response.status_code != 200:
-    #         raise Exception(f"Failed to query Jenkins API: {response.status_code}")
-
-    #     job_info = response.json()
-    #     latest_build_number = job_info["lastBuild"]["number"]
-
-    #     # Step 2: Poll the latest build's status
-    #     build_url = (
-    #         f"{JENKINS_URL}/job/{JENKINS_JOB_NAME}/{latest_build_number}/api/json"
-    #     )
-
-    #     while True:
-    #         response = requests.get(build_url, auth=(JENKINS_USER, JENKINS_TOKEN))
-    #         if response.status_code == 200:
-    #             build_info = response.json()
-    #             if not build_info["building"]:  # Build is finished
-    #                 if build_info["result"] == "SUCCESS":
-    #                     print("Jenkins build successful!")
-    #                     return True
-    #                 else:
-    #                     raise Exception("Jenkins build failed!")
-    #         else:
-    #             raise Exception(f"Failed to query Jenkins API: {response.status_code}")
-
-    #         time.sleep(30)  # Poll every 30 seconds
     with TaskGroup(group_id="training_branch") as training_branch:
         create_ec2_instance = EC2CreateInstanceOperator(
             task_id="create_ec2_instance",
