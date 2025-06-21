@@ -1,13 +1,14 @@
 import logging
 import boto3
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from airflow.decorators import task
 from airflow.models.dag import DAG
 from airflow.providers.amazon.aws.operators.ec2 import (
     EC2CreateInstanceOperator,
     EC2TerminateInstanceOperator,
 )
+from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
 import paramiko
 from airflow.utils.trigger_rule import TriggerRule
@@ -139,6 +140,8 @@ with DAG(
         @task
         def check_ec2_status(instance_id):
             """Check if the EC2 instance has passed both status checks (2/2 checks passed)."""
+            max_wait_time = timedelta(minutes=15)
+            start_time = datetime.utcnow()
 
             ec2_client = boto3.client(
                 "ec2",
@@ -148,7 +151,7 @@ with DAG(
             )
             passed_checks = False
 
-            while not passed_checks:
+            while not passed_checks and (datetime.now() - start_time) < max_wait_time:
                 # Get the instance status
                 response = ec2_client.describe_instance_status(InstanceIds=instance_id)
 
@@ -181,6 +184,11 @@ with DAG(
 
                 # Wait before polling again
                 time.sleep(15)
+
+            if not passed_checks:
+                raise AirflowException(
+                    f"EC2 instance {instance_id} did not pass status checks within {max_wait_time}."
+                )
 
             return True
 
@@ -215,95 +223,88 @@ with DAG(
 
         logging.info(f"ec2 instance output {create_ec2_instance.output}")
 
+        def _generate_remote_training_command():
+            """Generates the shell command to be executed on the remote EC2 instance."""
+
+            # Environment variables for MLflow and Snowflake
+            # TODO : change with connection variables
+            # export SNOWFLAKE_USER={snowflake_conn.login}
+            # export SNOWFLAKE_PASSWORD={snowflake_conn.password}
+            # export SNOWFLAKE_WAREHOUSE={snowflake_conn.warehouse}
+            # export SNOWFLAKE_SCHEMA={snowflake_conn.schema}
+            # export SNOWFLAKE_DATABASE={snowflake_conn.database}
+            # export SNOWFLAKE_ROLE={snowflake_conn.role}
+            env_vars = {
+                "MLFLOW_TRACKING_URI": MLFLOW_TRACKING_URI,
+                "MLFLOW_EXPERIMENT_ID": MLFLOW_EXPERIMENT_ID,
+                "MLFLOW_LOGGED_MODEL": MLFLOW_LOGGED_MODEL,
+                "MLFLOW_EXPERIMENT_NAME": "jedha-lead",
+                "AWS_ACCESS_KEY_ID": AWS_ACCESS_KEY_ID,
+                "AWS_SECRET_ACCESS_KEY": AWS_SECRET_ACCESS_KEY,
+                "SNOWFLAKE_ACCOUNT": SNOWFLAKE_ACCOUNT,
+                "SNOWFLAKE_USER": SNOWFLAKE_USER,
+                "SNOWFLAKE_PASSWORD": SNOWFLAKE_PASSWORD,
+                "SNOWFLAKE_WAREHOUSE": SNOWFLAKE_WAREHOUSE,
+                "SNOWFLAKE_SCHEMA": SNOWFLAKE_SCHEMA,
+                "SNOWFLAKE_DATABASE": SNOWFLAKE_DATABASE,
+                "SNOWFLAKE_ROLE": SNOWFLAKE_ROLE,
+            }
+
+            # Convert environment variables to export commands
+            export_commands = [
+                f'export {key}="{value}"' for key, value in env_vars.items()
+            ]
+
+            # Core training commands
+            training_commands = [
+                "git clone https://github.com/littlerobinson/ml-rescue-predict.git",
+                "cd ml-rescue-predict/training",
+                "docker build -t ml-rescue-predict-training .",
+                "cp run.sh.example run.sh",
+                "chmod +x run.sh",
+                "./run.sh",
+            ]
+
+            # Combine all commands
+            return "\n".join(export_commands + training_commands)
+
         @task
         def run_training_via_paramiko(public_ip):
             """Use Paramiko to SSH into the EC2 instance and run ML training."""
 
-            print("PUBLIC IP:", public_ip)
-            # Initialize SSH client
+            logging.info(f"Connecting to EC2 instance at {public_ip}")
             ssh_client = paramiko.SSHClient()
-            ssh_client.set_missing_host_key_policy(
-                paramiko.AutoAddPolicy()
-            )  # Automatically add unknown hosts
-
-            # Load private key
+            ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             private_key = paramiko.RSAKey.from_private_key_file(KEY_PATH)
 
             try:
-                # Establish an SSH connection
                 ssh_client.connect(
                     hostname=public_ip, username="ubuntu", pkey=private_key
                 )
-                # TODO : change with connection variables
-                # export SNOWFLAKE_USER={snowflake_conn.login}
-                # export SNOWFLAKE_PASSWORD={snowflake_conn.password}
-                # export SNOWFLAKE_WAREHOUSE={snowflake_conn.warehouse}
-                # export SNOWFLAKE_SCHEMA={snowflake_conn.schema}
-                # export SNOWFLAKE_DATABASE={snowflake_conn.database}
-                # export SNOWFLAKE_ROLE={snowflake_conn.role}
-                command = f"""
-                export MLFLOW_TRACKING_URI="{MLFLOW_TRACKING_URI}"
-                export MLFLOW_EXPERIMENT_ID="{MLFLOW_EXPERIMENT_ID}"
-                export MLFLOW_LOGGED_MODEL="{MLFLOW_LOGGED_MODEL}"
-                export MLFLOW_EXPERIMENT_NAME="jedha-lead"
-                export AWS_ACCESS_KEY_ID="{AWS_ACCESS_KEY_ID}"
-                export AWS_SECRET_ACCESS_KEY="{AWS_SECRET_ACCESS_KEY}"
-                export SNOWFLAKE_ACCOUNT="{SNOWFLAKE_ACCOUNT}"
-                export SNOWFLAKE_USER="{SNOWFLAKE_USER}"
-                export SNOWFLAKE_PASSWORD="{SNOWFLAKE_PASSWORD}"
-                export SNOWFLAKE_WAREHOUSE="{SNOWFLAKE_WAREHOUSE}"
-                export SNOWFLAKE_SCHEMA="{SNOWFLAKE_SCHEMA}"
-                export SNOWFLAKE_DATABASE="{SNOWFLAKE_DATABASE}"
-                export SNOWFLAKE_ROLE="{SNOWFLAKE_ROLE}"
-                git clone https://github.com/littlerobinson/ml-rescue-predict.git
-                cd ml-rescue-predict/training
-                docker build -t ml-rescue-predict-training .
-                cp run.sh.example run.sh
-                chmod +x run.sh
-                ./run.sh
-                """
+                command = _generate_remote_training_command()
 
                 # Run your training command via SSH
                 stdin, stdout, stderr = ssh_client.exec_command(command)
 
-                # stdout_text = ""
-                # stderr_text = ""
+                # Stream logs in real-time
+                def stream_output(channel, log_level):
+                    for line in iter(lambda: channel.readline(2048), ""):
+                        logging.log(log_level, line.strip())
 
-                # while not stdout.channel.exit_status_ready():
-                #     if stdout.channel.recv_ready():
-                #         stdout_text += stdout.channel.recv(1024).decode()
-                #     if stdout.channel.recv_stderr_ready():
-                #         stderr_text += stdout.channel.recv_stderr(1024).decode(
-                #             "utf-8", errors="ignore"
-                #         )
+                # Log stdout and stderr as they are generated
+                stream_output(stdout, logging.INFO)
+                stream_output(stderr, logging.ERROR)
 
-                #     time.sleep(5)  # Wait before verify a new time
-
-                # # Read outputs
-                # stdout_text += stdout.read().decode()
-                # stderr_text += stderr.read().decode()
-
-                # # Display outputs
-                # logging.info(stdout_text)
-                # logging.error(stderr_text)
-
-                # Wait for the command to complete
+                # Wait for the command to complete and get the exit status
                 exit_status = stdout.channel.recv_exit_status()
 
-                # Read the outputs
-                stdout_text = stdout.read().decode()
-                stderr_text = stderr.read().decode()
-
-                # Log the outputs
-                logging.info(f"STDOUT:\n{stdout_text}")
-                logging.error(f"STDERR:\n{stderr_text}")
-
                 if exit_status != 0:
-                    logging.error(f"Command failed with exit status: {exit_status}")
+                    error_message = f"Command failed with exit status: {exit_status}"
+                    logging.error(error_message)
+                    # Raise an AirflowException to ensure the task fails properly
+                    raise AirflowException(error_message)
                 else:
                     logging.info("Command executed successfully.")
-
-                # logging.info("Command executed successfully.")
 
             except Exception as e:
                 logging.error(f"Error occurred during SSH: {str(e)}")
@@ -320,7 +321,7 @@ with DAG(
             region_name=region_name,
             instance_ids=create_ec2_instance.output,
             wait_for_completion=True,
-            trigger_rule=TriggerRule.ALL_SUCCESS,
+            trigger_rule=TriggerRule.ALL_DONE,  # Critical: Run this task even if upstream tasks fail
         )
 
         (
