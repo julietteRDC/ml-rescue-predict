@@ -3,13 +3,13 @@ import os
 
 import snowflake.connector
 from dotenv import load_dotenv
-from sklearn.compose import ColumnTransformer
-from sklearn.discriminant_analysis import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.compose import ColumnTransformer  # Unused import
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
+from xgboost import XGBClassifier
 
 import mlflow
 from mlflow.models import infer_signature
@@ -41,7 +41,7 @@ def load_data_from_snowflake():
         },
     )
 
-    query_limit = 100
+    query_limit = 1000000
     query = f"""
         SELECT *
         FROM rescue_predict_db.public."accidents"
@@ -94,6 +94,11 @@ if __name__ == "__main__":
         logging.info("Preparing data")
         target_column = "nombre_d_accidents"
 
+        # Binarize the target column: 0 if no accidents, 1 if one or more accidents
+        rescue_predict_df[target_column] = (
+            rescue_predict_df[target_column] > 0
+        ).astype(int)
+
         # Delete uneeded columns (snowflake columns and others)
         uneeded_columns = [
             "task_id",
@@ -126,7 +131,13 @@ if __name__ == "__main__":
                 ("preprocessing", preprocessor),
                 (
                     "classifier",
-                    RandomForestClassifier(n_estimators=20, random_state=42, n_jobs=-1),
+                    XGBClassifier(
+                        objective="binary:logistic",
+                        eval_metric="logloss",
+                        n_estimators=100,
+                        random_state=42,
+                        n_jobs=-1,
+                    ),
                 ),
             ]
         )
@@ -145,7 +156,9 @@ if __name__ == "__main__":
         logging.info("Evaluating model")
         y_pred = pipeline.predict(X_test)
         acc = accuracy_score(y_test, y_pred)
-        f1 = f1_score(y_test, y_pred)
+        f1 = f1_score(
+            y_test, y_pred, average="weighted"
+        )  # Use 'weighted' for F1-score in binary classification with potential imbalance
 
         logging.info(f"Accuracy: {acc:.4f}, F1 Score: {f1:.4f}")
         mlflow.log_metric("accuracy", acc)
