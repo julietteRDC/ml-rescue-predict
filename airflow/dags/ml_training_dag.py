@@ -293,7 +293,7 @@ with DAG(
 
                 # Log stdout and stderr as they are generated
                 stream_output(stdout, logging.INFO)
-                stream_output(stderr, logging.ERROR)
+                stream_output(stderr, logging.WARNING)
 
                 # Wait for the command to complete and get the exit status
                 exit_status = stdout.channel.recv_exit_status()
