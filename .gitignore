@@ -1,4 +1,5 @@
 *.sh
+*.pem
 
 # MLFLOW
 mlruns
@@ -8,7 +9,7 @@ secrets.sh
 # Airflow
 airflow/logs/*
 airflow/s3_files/*
-airflow/secrets/*
+airflow/secrets/*.json
 
 # Research Data
 notebooks/**/*.csv

@@ -22,3 +22,7 @@ USER airflow
 # Install dependencies
 COPY requirements.txt requirements.txt 
 RUN pip install -r requirements.txt
+
+# TODO : Create initiallization script for airflow
+# COPY scripts/ /opt/airflow/scripts/
+# RUN chmod +x /opt/airflow/scripts/init_airflow.sh

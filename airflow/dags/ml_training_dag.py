@@ -75,7 +75,7 @@ default_args = {
 # Define the DAG
 with DAG(
     dag_id=DAG_ID,
-    schedule_interval=None,
+    schedule_interval="0 0 31 12 *",
     default_args=default_args,
     description="Poll Jenkins, launch EC2, and run ML training",
     catchup=False,

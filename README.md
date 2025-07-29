@@ -15,7 +15,7 @@ echo -e "AIRFLOW_UID=$(id -u)" > .env
 
 ```bash
 docker compose up airflow-init
-docker-compose up --build
+docker-compose up -d --build
 ```
 
 4. Access Airflow web interface:
@@ -71,9 +71,39 @@ Configure the following connections in Airflow (Admin > Connections):
    - Conn Type: Amazon Web Services
    - Configure with your AWS credentials
 
-2. PostgreSQL Connection (`postgres_id`):
-   - Conn Type: Postgres
+2. Snowflake Connection (`snowflake_id`):
+   - Conn Type: Snowflake
    - Configure with your database credentials
+
+### Database structure
+
+```sql
+create or replace TABLE RESCUE_PREDICT_DB.PUBLIC."accidents" (
+"com" NUMBER(38,0),
+"population" NUMBER(38,0),
+"jour" NUMBER(38,0),
+"mois" NUMBER(38,0),
+"an" NUMBER(38,0),
+"public_holidays" BOOLEAN,
+"zone_a" BOOLEAN,
+"zone_b" BOOLEAN,
+"zone_c" BOOLEAN,
+"dep" NUMBER(38,0),
+"nombre_d_accidents" NUMBER(38,0),
+"date" VARCHAR(16777216),
+"temp" FLOAT,
+"feels_like" FLOAT,
+"temp_min" FLOAT,
+"temp_max" FLOAT,
+"pressure" FLOAT,
+"humidity" FLOAT,
+"wind_speed" FLOAT,
+"clouds_all" FLOAT,
+"execution_date" VARCHAR(16777216),
+"dag_id" VARCHAR(16777216),
+"task_id" VARCHAR(16777216)
+);
+```
 
 ## API
 
