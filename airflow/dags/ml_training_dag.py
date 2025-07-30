@@ -45,19 +45,21 @@ MLFLOW_LOGGED_MODEL = Variable.get("MLFLOW_LOGGED_MODEL")
 AWS_ACCESS_KEY_ID = aws_access_key_id
 AWS_SECRET_ACCESS_KEY = aws_secret_access_key
 
-SNOWFLAKE_USER = Variable.get("SNOWFLAKE_USER")
-SNOWFLAKE_PASSWORD = Variable.get("SNOWFLAKE_PASSWORD")
-SNOWFLAKE_ACCOUNT = Variable.get("SNOWFLAKE_ACCOUNT")
-SNOWFLAKE_WAREHOUSE = Variable.get("SNOWFLAKE_WAREHOUSE")
-SNOWFLAKE_SCHEMA = Variable.get("SNOWFLAKE_SCHEMA")
-SNOWFLAKE_DATABASE = Variable.get("SNOWFLAKE_DATABASE")
-SNOWFLAKE_ROLE = ""
+# SNOWFLAKE_USER = Variable.get("SNOWFLAKE_USER")
+# SNOWFLAKE_PASSWORD = Variable.get("SNOWFLAKE_PASSWORD")
+# SNOWFLAKE_ACCOUNT = Variable.get("SNOWFLAKE_ACCOUNT")
+# SNOWFLAKE_WAREHOUSE = Variable.get("SNOWFLAKE_WAREHOUSE")
+# SNOWFLAKE_SCHEMA = Variable.get("SNOWFLAKE_SCHEMA")
+# SNOWFLAKE_DATABASE = Variable.get("SNOWFLAKE_DATABASE")
+# SNOWFLAKE_ROLE = ""
 
-# DB_USER = snowflake_conn.login
-# DB_PASSWORD = snowflake_conn.password
-# DB_HOST = snowflake_conn.host
-# DB_PORT = snowflake_conn.port
-# DB_NAME = snowflake_conn.schema
+SNOWFLAKE_USER = snowflake_conn.login
+SNOWFLAKE_PASSWORD = snowflake_conn.password
+SNOWFLAKE_ACCOUNT = snowflake_conn.extra_dejson.get("account")
+SNOWFLAKE_WAREHOUSE = snowflake_conn.extra_dejson.get("warehouse")
+SNOWFLAKE_DATABASE = snowflake_conn.extra_dejson.get("database")
+SNOWFLAKE_SCHEMA = snowflake_conn.schema
+SNOWFLAKE_ROLE = ""
 
 
 if not all([JENKINS_URL, JENKINS_USER, JENKINS_TOKEN]):

@@ -9,7 +9,8 @@ secrets.sh
 # Airflow
 airflow/logs/*
 airflow/s3_files/*
-airflow/secrets/*.json
+airflow/secrets/*
+!airflow/secrets/*.example
 
 # Research Data
 notebooks/**/*.csv
