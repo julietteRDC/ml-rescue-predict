@@ -1,5 +1,47 @@
 # 🚀 Jedha Lead
 
+## Project Architecture 🏗️
+
+The project is composed of several integrated components:
+
+- **Airflow**: Orchestrates ETL and ML training workflows. DAGs automate data ingestion, transformation, and model training. Airflow loads secrets and connections from JSON/config files and environment variables.
+    - ETL DAG: Fetches accident, weather, holidays, and meta data, processes and uploads to S3, then loads into Snowflake.
+    - ML Training DAG: Launches EC2 instances, polls Jenkins, runs ML training, and manages model deployment.
+- **S3**: Stores raw and processed CSV data files for ingestion and training.
+- **Snowflake**: Serves as the data warehouse, ingesting processed CSVs from S3 for analytics and ML.
+- **MLflow**: Tracks experiments, models, and metrics. Integrated with Airflow and EC2 for training and deployment.
+- **API**: Exposes model predictions and data endpoints. Built with FastAPI and deployed via Docker.
+- **Jenkins**: (Optional) Triggers ML training jobs and CI/CD pipelines.
+
+**Data Flow:**
+
+1. Airflow DAGs fetch and process data, saving results to S3.
+2. Airflow loads processed CSVs from S3 into Snowflake using the S3ToSnowflakeOperator.
+3. ML training DAG launches EC2, runs training scripts, and logs results to MLflow.
+4. API serves predictions using trained models and data from Snowflake.
+
+**Configuration:**
+- Secrets and connection info are managed via Airflow Variables and Connections (JSON/config import).
+- Docker Compose orchestrates all services for local development.
+
+**Diagram (Textual):**
+
+```
+        [External Data Sources]
+                 |
+                 v
+         [Airflow DAGs]
+                 |
+                 v
+         [S3] <--> [Snowflake]
+                 |
+                 v
+         [ML Training (EC2, MLflow)]
+                 |
+                 v
+         [API (FastAPI)]
+```
+
 ## Airflow Configuration 🔐
 
 ### Installation & Setup 🚀

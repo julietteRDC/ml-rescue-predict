@@ -1,0 +1,36 @@
+[
+  {
+    "conn_id": "aws_default",
+    "conn_type": "aws",
+    "description": "",
+    "host": "",
+    "login": "LOGIN_HERE",
+    "password": "PASSWORD_HERE",
+    "schema": "",
+    "port": null,
+    "extra": "{\"region_name\": \"eu-west-3\",\"config_kwargs\": {\"retries\": {\"max_attempts\": 50,\"mode\": \"standard\"}}}"
+  },
+  {
+    "conn_id": "postgres_id",
+    "conn_type": "postgres",
+    "description": "",
+    "host": "NEWODB_HOST_HERE",
+    "login": "neondb_owner",
+    "password": "NEODB_PASSWORD_HERE",
+    "schema": "neondb",
+    "port": null,
+    "extra": "{}"
+  },
+  {
+    "conn_id": "snowflake_rescue_predict_db",
+    "conn_type": "snowflake",
+    "description": "Snowflake connection for rescue predict DB",
+    "host": "<SNOWFLAKE_ACCOUNT>.snowflakecomputing.com",
+    "login": "<SNOWFLAKE_USER>",
+    "password": "<SNOWFLAKE_PASSWORD>",
+    "schema": "<SNOWFLAKE_SCHEMA>",
+    "port": 443,
+    "extra": "{\"account\": \"<SNOWFLAKE_ACCOUNT>\", \"warehouse\": \"<SNOWFLAKE_WAREHOUSE>\", \"database\": \"<SNOWFLAKE_DATABASE>\", \"role\": \"<SNOWFLAKE_ROLE>\"}"
+  }
+
+]

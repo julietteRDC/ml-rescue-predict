@@ -1,0 +1,15 @@
+{
+  "OPENWEATHERMAP_API": "your_api_key_here",
+  "S3BucketName": "your_bucket_name_here",
+  "S3Path": "your_s3_path_here",
+  "JENKINS_URL": "http://jenkins.example.com",
+  "JENKINS_USER": "user",
+  "JENKINS_PASSWORD": "password123",
+  "JENKINS_TOKEN": "token",
+  "JENKINS_JOB_NAME": "rescue-predict-job",
+  "KEY_PAIR_NAME": "my-key-pair",
+  "KEY_PATH": "/path/to/my-key.pem",
+  "AMI_ID": "ami-12345678",
+  "SECURITY_GROUP_ID": "sg-12345678",
+  "INSTANCE_TYPE": "t2.micro"
+}
