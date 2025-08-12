@@ -242,6 +242,8 @@ services:
         fi
         mkdir -p /sources/logs /sources/dags /sources/plugins
         chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins}
+        python /opt/airflow/config/load_connections.py
+        airflow variables import /opt/airflow/config/variables.json
         exec /entrypoint airflow version
     # yamllint enable rule:line-length
     environment:
@@ -254,6 +256,7 @@ services:
     user: "0:0"
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}:/sources
+      - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
 
   airflow-cli:
     <<: *airflow-common

@@ -1,28 +1,73 @@
-from datetime import datetime, timedelta
-import time
-
-import pandas as pd
-
+import os
 import logging
 import pandas as pd
-import pytz
+import re
 from datetime import datetime, timedelta
-from airflow import DAG  # type: ignore
-from airflow.operators.python import PythonOperator  # type: ignore
+from airflow import DAG # type: ignore
+from airflow.operators.python import PythonOperator # type: ignore
 from weather_common import load_geocoded_communes, get_s3_hook, S3_PATH, S3_BUCKET_NAME, OPENWEATHERMAP_API, retry_request
 
+default_args = {
+    "owner": "airflow",
+    "start_date": datetime(2025, 3, 1),
+    "retries": 1,
+}
 
-def fetch_weather_data(execution_date=None):
+
+def fetch_pending_weather_data():
     commune_rows = load_geocoded_communes()
     s3_path = S3_PATH
     s3_hook = get_s3_hook()
     api_key = OPENWEATHERMAP_API
-    if execution_date is None:
-        execution_date = datetime.now(pytz.UTC)
-    elif isinstance(execution_date, str):
-        execution_date = pd.to_datetime(execution_date).tz_localize("UTC")
-    date_str = execution_date.strftime("%Y-%m-%d")
-    missing_dates = [date_str]
+    # 1. List all accident files in S3 and extract all unique accident dates
+    accident_prefix = f"{s3_path}/accidents/"
+    accident_keys = s3_hook.list_keys(
+        bucket_name=S3_BUCKET_NAME, prefix=accident_prefix)
+    accident_dates = set()
+    for key in accident_keys:
+        if key.endswith('.csv'):
+            local_path = os.path.join("/tmp", os.path.basename(key))
+            try:
+                s3_hook.get_key(
+                    key=key, bucket_name=S3_BUCKET_NAME).download_file(local_path)
+                df = pd.read_csv(local_path, sep=None, engine='python')
+                for col_set in [("an", "mois", "jour"), ("date",)]:
+                    if all(c in df.columns for c in col_set):
+                        if "date" in col_set:
+                            dates = pd.to_datetime(df["date"], errors='coerce').dt.strftime(
+                                "%Y-%m-%d").dropna().unique()
+                        else:
+                            dates = pd.to_datetime(df[["an", "mois", "jour"]].astype(str).agg(
+                                "-".join, axis=1), errors='coerce').dt.strftime("%Y-%m-%d").dropna().unique()
+                        accident_dates.update(dates)
+                        break
+            except Exception as e:
+                logging.warning(f"Could not parse accident file {key}: {e}")
+            finally:
+                try:
+                    if os.path.exists(local_path):
+                        os.remove(local_path)
+                except Exception:
+                    pass
+    # 2. Check which weather files are missing for those dates
+    weather_prefix = f"{s3_path}/weather/weather_history_"
+    weather_keys = s3_hook.list_keys(
+        bucket_name=S3_BUCKET_NAME, prefix=weather_prefix)
+    weather_dates = set()
+    for key in weather_keys:
+        m = re.search(r"weather_history_(\d{4}-\d{2}-\d{2})\\.csv$", key)
+        if m:
+            weather_dates.add(m.group(1))
+        else:
+            m2 = re.search(
+                r"weather_history_(\d{4})_(\d{2})_(\d{2})\\.csv$", key)
+            if m2:
+                weather_dates.add(f"{m2.group(1)}-{m2.group(2)}-{m2.group(3)}")
+    missing_dates = sorted(set(accident_dates) - set(weather_dates))
+    logging.info(f"Accident dates needing weather: {sorted(accident_dates)}")
+    logging.info(f"Weather already present for: {sorted(weather_dates)}")
+    logging.info(f"Missing weather dates: {missing_dates}")
+    # Fetch weather for all missing dates
     for date_str in missing_dates:
         s3_key = f"{s3_path}/weather/weather_history_{date_str}.csv"
         if s3_hook.check_for_key(key=s3_key, bucket_name=S3_BUCKET_NAME):
@@ -65,7 +110,6 @@ def fetch_weather_data(execution_date=None):
                             "wind_speed": weather_data.get("wind_speed"),
                             "clouds_all": weather_data.get("clouds"),
                         })
-                        logging.info(f"Got weather for {commune} on {date_str}")
                     else:
                         logging.warning(
                             f"No weather data for {commune} on {date_str}")
@@ -74,7 +118,7 @@ def fetch_weather_data(execution_date=None):
                         f"Failed to parse weather for {commune} on {date_str}: {e}")
             else:
                 logging.warning(
-                    f"Failed to fetch weather for {commune} on {date_str} after retries. Url: {hist_url}")
+                    f"Failed to fetch weather for {commune} on {date_str} after retries.")
         local_weather_path = f"/tmp/weather_history_{date_str}.csv"
         df_weather = pd.DataFrame(weather_rows)
         df_weather.to_csv(local_weather_path, index=False)
@@ -89,23 +133,16 @@ def fetch_weather_data(execution_date=None):
             f"Weather data uploaded to S3: {local_weather_path} -> {s3_key}")
 
 
-dag_default_args = {
-    "owner": "airflow",
-    "start_date": datetime(2025, 3, 1),
-    "retries": 1,
-}
-
 with DAG(
-    "weather_dag",
-    default_args=dag_default_args,
-    description="Fetch and upload weather data for all communes to S3 (date-specific)",
-    schedule_interval="@daily",
-    tags=["weather"],
+    "weather_pending_dag",
+    default_args=default_args,
+    description="Fetch all pending weather for accident dates (manual/one-off)",
+    schedule_interval=None,
+    tags=["weather", "pending"],
 ) as dag:
-    fetch_weather_task = PythonOperator(
-        task_id="fetch_weather_data",
-        python_callable=fetch_weather_data,
-        op_kwargs={"execution_date": "{{ ds }}"},
+    fetch_pending_weather_task = PythonOperator(
+        task_id="fetch_pending_weather_data",
+        python_callable=fetch_pending_weather_data,
         retries=1,
         retry_delay=timedelta(minutes=10),
     )
