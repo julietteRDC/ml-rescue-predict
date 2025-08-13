@@ -9,7 +9,7 @@ import pytz
 from datetime import datetime, timedelta
 from airflow import DAG  # type: ignore
 from airflow.operators.python import PythonOperator  # type: ignore
-from weather_common import load_geocoded_communes, get_s3_hook, S3_PATH, S3_BUCKET_NAME, OPENWEATHERMAP_API, retry_request
+from weather_common import fetch_weather_rows_for_dates_and_communes, load_geocoded_communes, get_s3_hook, S3_PATH, S3_BUCKET_NAME, OPENWEATHERMAP_API, retry_request
 
 
 def fetch_weather_data(execution_date=None):
@@ -22,71 +22,29 @@ def fetch_weather_data(execution_date=None):
     elif isinstance(execution_date, str):
         execution_date = pd.to_datetime(execution_date).tz_localize("UTC")
     date_str = execution_date.strftime("%Y-%m-%d")
-    missing_dates = [date_str]
-    for date_str in missing_dates:
-        s3_key = f"{s3_path}/weather/weather_history_{date_str}.csv"
-        if s3_hook.check_for_key(key=s3_key, bucket_name=S3_BUCKET_NAME):
-            logging.info(
-                f"Weather file already exists in S3 for {date_str}, skipping fetch.")
-            continue
-        weather_rows = []
-        dt = pd.to_datetime(date_str)
-        unix_ts = int(dt.replace(hour=0, minute=0, second=0,
-                      microsecond=0, tzinfo=pd.Timestamp.utcnow().tz).timestamp())
-        for row in commune_rows:
-            commune = row["commune"]
-            lat = row.get("lat")
-            lon = row.get("lon")
-            if pd.isnull(lat) or pd.isnull(lon):
-                logging.warning(f"Missing lat/lon for {commune}, skipping.")
-                continue
-            hist_url = f"https://api.openweathermap.org/data/2.5/onecall/timemachine?lat={lat}&lon={lon}&dt={unix_ts}&appid={api_key}&units=metric"
-            resp = retry_request(hist_url)
-            if resp:
-                try:
-                    data = resp.json()
-                    weather_data = None
-                    if resp.status_code == 200 and "hourly" in data and data["hourly"]:
-                        noon_hour = next((h for h in data["hourly"] if pd.to_datetime(
-                            h["dt"], unit="s").hour == 12), data["hourly"][0])
-                        weather_data = noon_hour
-                    elif resp.status_code == 200 and "current" in data:
-                        weather_data = data["current"]
-                    if weather_data:
-                        weather_rows.append({
-                            "commune": commune,
-                            "date": date_str,
-                            "temp": weather_data.get("temp"),
-                            "feels_like": weather_data.get("feels_like"),
-                            "temp_min": weather_data.get("temp", None),
-                            "temp_max": weather_data.get("temp", None),
-                            "pressure": weather_data.get("pressure"),
-                            "humidity": weather_data.get("humidity"),
-                            "wind_speed": weather_data.get("wind_speed"),
-                            "clouds_all": weather_data.get("clouds"),
-                        })
-                        logging.info(f"Got weather for {commune} on {date_str}")
-                    else:
-                        logging.warning(
-                            f"No weather data for {commune} on {date_str}")
-                except Exception as e:
-                    logging.warning(
-                        f"Failed to parse weather for {commune} on {date_str}: {e}")
-            else:
-                logging.warning(
-                    f"Failed to fetch weather for {commune} on {date_str} after retries. Url: {hist_url}")
-        local_weather_path = f"/tmp/weather_history_{date_str}.csv"
-        df_weather = pd.DataFrame(weather_rows)
-        df_weather.to_csv(local_weather_path, index=False)
-        logging.info(f"Uploading weather data to S3 for {date_str}")
-        s3_hook.load_file(
-            filename=local_weather_path,
-            key=s3_key,
-            bucket_name=S3_BUCKET_NAME,
-            replace=True,
-        )
+    s3_key = f"{s3_path}/weather/weather_history_{date_str}.csv"
+    if s3_hook.check_for_key(key=s3_key, bucket_name=S3_BUCKET_NAME):
         logging.info(
-            f"Weather data uploaded to S3: {local_weather_path} -> {s3_key}")
+            f"Weather file already exists in S3 for {date_str}, skipping fetch.")
+        return
+    weather_rows = []
+    dt = pd.to_datetime(date_str)
+    unix_ts = int(dt.replace(hour=0, minute=0, second=0,
+                             microsecond=0, tzinfo=pd.Timestamp.utcnow().tz).timestamp())
+    weather_rows = fetch_weather_rows_for_dates_and_communes(
+        [date_str], [(row["commune"], row.get("lat"), row.get("lon")) for row in commune_rows], api_key)
+    local_weather_path = f"/tmp/weather_history_{date_str}.csv"
+    df_weather = pd.DataFrame(weather_rows)
+    df_weather.to_csv(local_weather_path, index=False)
+    logging.info(f"Uploading weather data to S3 for {date_str}")
+    s3_hook.load_file(
+        filename=local_weather_path,
+        key=s3_key,
+        bucket_name=S3_BUCKET_NAME,
+        replace=True,
+    )
+    logging.info(
+        f"Weather data uploaded to S3: {local_weather_path} -> {s3_key}")
 
 
 dag_default_args = {
