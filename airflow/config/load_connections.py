@@ -2,7 +2,7 @@ import json
 from airflow import settings
 from airflow.models import Connection
 
-with open('/opt/airflow/config/connections.json') as f:
+with open("/opt/airflow/secrets/connections.json") as f:
     connections = json.load(f)
     session = settings.Session()
     for conn in connections:
