@@ -88,7 +88,7 @@ class TestMlTrainingDag(unittest.TestCase):
         """Check DAG integrity, task count, and basic structure."""
         dag = ml_training_dag.dag
         self.assertIsNotNone(dag)
-        self.assertEqual(dag.dag_id, "jenkins_ec2_ml_training_dag")
+        self.assertEqual(dag.dag_id, "ec2_ml_training_dag")
         self.assertEqual(len(dag.tasks), 1)  # The TaskGroup is one task
         self.assertEqual(len(dag.task_group.children), 5)  # 5 tasks inside the group
 
