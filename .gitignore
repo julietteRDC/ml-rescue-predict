@@ -12,6 +12,9 @@ airflow/s3_files/*
 airflow/secrets/*
 !airflow/secrets/*.example
 
+# Streamlit
+streamlit/.streamlit/*.toml
+
 # Research Data
 notebooks/**/*.csv
 

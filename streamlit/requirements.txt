@@ -4,3 +4,5 @@ folium
 streamlit-folium
 pandas
 requests
+snowflake-connector-python
+plotly

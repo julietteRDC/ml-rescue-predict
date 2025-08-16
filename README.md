@@ -1,5 +1,7 @@
 # 🚀 Jedha Lead
 
+![alt text](preview-ui.png)
+
 ## Project Architecture 🏗️
 
 The project is composed of several integrated components:
@@ -217,14 +219,14 @@ SHOW USERS LIKE 'BOT_USER';
 
 ```
 
-## API
+## Streamlit
 
 ### Installation & Setup 🚀
 
 ```bash
-source secrets.sh
-cd api
-docker build -t rescue-predict-api .
-chmod +x run.sh
-./run.sh
+cd streamlit
+docker compose build
+docker compose up -d
 ```
+
+open http://0.0.0.0:7860 and enjoy ! 🚀
