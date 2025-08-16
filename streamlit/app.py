@@ -77,7 +77,8 @@ def load_data_from_snowflake(query_date):
                 return pd.DataFrame()
         else:
             return pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        st.error(f"Une erreur inattendue est survenue : {e}")
         return pd.DataFrame()
     finally:
         if "cs" in locals() and cs:
@@ -286,6 +287,9 @@ if not df_scores.empty and gdf_communes is not None:
         }
         table td, table th {
             padding: 8px;
+        }
+        th {
+            text-align: left !important;
         }
         </style>
         """,
