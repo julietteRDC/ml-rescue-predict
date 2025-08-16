@@ -1,10 +1,9 @@
 from __future__ import annotations
-import os
 import time
 import logging
 import pandas as pd
 import requests
-from airflow.hooks.S3_hook import S3Hook # type: ignore
+from airflow.hooks.S3_hook import S3Hook  # type: ignore
 from airflow.models import Variable
 from datetime import date, datetime, time as dtime, timezone
 from typing import Iterable, List, Tuple, Dict, Any, Optional
@@ -15,10 +14,11 @@ S3_BUCKET_NAME = Variable.get("S3BucketName")
 S3_PATH = Variable.get("S3Path")
 S3_CONNECTION_ID = "aws_default"
 
-COMMUNES_FILENAME = "weather_all_communes.csv"
+COMMUNES_FILENAME = "all_communes.csv"
 GEOCODED_COMMUNES_FILENAME = "weather_all_communes_geocoded.csv"
 
 ONECALL_TIMEMACHINE = "https://api.openweathermap.org/data/3.0/onecall/timemachine"
+
 
 def retry_request(
     url: str,
@@ -27,17 +27,21 @@ def retry_request(
     max_retries: int = 5,
     backoff: int = 2,
     timeout: int = 30,
-    verbose: bool = True
+    verbose: bool = True,
 ) -> Optional[requests.Response]:
     """Retry GET with exponential backoff. Supports query params."""
     delay = 1
-    logging.info(f"Trying request to {url} with params {params} up to {max_retries} times with backoff factor {backoff}")
+    logging.info(
+        f"Trying request to {url} with params {params} up to {max_retries} times with backoff factor {backoff}"
+    )
     for attempt in range(max_retries):
         try:
             resp = requests.get(url, params=params, timeout=timeout)
             if resp.status_code == 200:
                 if verbose:
-                    logging.info(f"Request succeeded: {url}/{params} ({resp.status_code})")
+                    logging.info(
+                        f"Request succeeded: {url}/{params} ({resp.status_code})"
+                    )
                 return resp
             else:
                 logging.warning(
@@ -50,6 +54,7 @@ def retry_request(
         delay *= backoff
     return None
 
+
 def _as_ymd(d: Any) -> str:
     if isinstance(d, date) and not isinstance(d, datetime):
         return d.isoformat()
@@ -58,6 +63,7 @@ def _as_ymd(d: Any) -> str:
     if isinstance(d, str):
         return d
     raise ValueError(f"Unsupported date type: {type(d)}")
+
 
 def _noon_utc_unix(d: Any) -> int:
     """Return UNIX timestamp for 12:00 UTC on the given calendar date."""
@@ -68,9 +74,10 @@ def _noon_utc_unix(d: Any) -> int:
     dt = datetime.combine(d, dtime(12, 0, 0, tzinfo=timezone.utc))
     return int(dt.timestamp())
 
+
 def fetch_weather_rows_for_dates_and_communes(
     dates: Iterable[Any],
-    communes: Iterable[Tuple[str, float, float]],
+    communes: List[Tuple[str, float, float]],  # Changed to List for indexing
     api_key: str,
     *,
     units: str = "metric",
@@ -78,136 +85,117 @@ def fetch_weather_rows_for_dates_and_communes(
     per_call_sleep: float = 0.25,
 ) -> List[Dict[str, Any]]:
     """
-    For each date and (commune, lat, lon), call One Call 3.0 timemachine at 12:00 UTC,
-    and return rows with the requested schema.
+    For each date, fetches weather for the FIRST commune, then applies this
+    weather to ALL communes, ensuring each has its correct name and code.
     """
+    s3_hook = get_s3_hook()
+    communes_s3_key = f"{S3_PATH}/meta/{COMMUNES_FILENAME}"
+    local_communes_path = f"/tmp/s3_files/{COMMUNES_FILENAME}"
+    if s3_hook.check_for_key(communes_s3_key, S3_BUCKET_NAME):
+        logging.info(f"Fichier trouvé : {communes_s3_key}")
+        s3_hook.get_key(key=communes_s3_key, bucket_name=S3_BUCKET_NAME).download_file(
+            local_communes_path
+        )
+    else:
+        logging.error(f"Fichier non trouvé : {communes_s3_key}")
+        raise FileNotFoundError(
+            f"L'objet {communes_s3_key} n'existe pas dans le bucket {S3_BUCKET_NAME}"
+        )
+    s3_hook.get_key(key=communes_s3_key, bucket_name=S3_BUCKET_NAME).download_file(
+        local_communes_path
+    )
+    df_communes = pd.read_csv(local_communes_path)
+    commune_code_map = pd.Series(
+        df_communes.code.values, index=df_communes.commune
+    ).to_dict()
+
     weather_rows: List[Dict[str, Any]] = []
 
     for d in dates:
-        curr_date_rows = []
         date_str = _as_ymd(d)
         ts = _noon_utc_unix(d)
-        communes_ = list(communes)[:1]  # For testing, limit to 1 commune
-        for commune, lat, lon in communes_ :
-            params = {
-                "lat": f"{lat:.6f}",
-                "lon": f"{lon:.6f}",
-                "dt": ts,
-                "appid": api_key,
-                "units": units,  # "standard"|"metric"|"imperial"
-            }
-            if lang:
-                params["lang"] = lang
 
-            resp = retry_request(ONECALL_TIMEMACHINE, params=params)
-            if not resp:
-                logging.error(f"Giving up for {commune} {lat},{lon} {date_str}")
+        # --- ÉTAPE 1: Récupérer la météo UNE SEULE FOIS (pour la première commune) ---
+        if not communes:
+            logging.warning("The communes list is empty. Skipping date.")
+            continue
+
+        first_commune_name, lat, lon = communes[0]
+        params = {
+            "lat": f"{lat:.6f}",
+            "lon": f"{lon:.6f}",
+            "dt": ts,
+            "appid": api_key,
+            "units": units,
+        }
+        if lang:
+            params["lang"] = lang
+
+        logging.info(
+            f"Fetching reference weather for {first_commune_name} on {date_str}"
+        )
+        resp = retry_request(ONECALL_TIMEMACHINE, params=params)
+
+        # Extraire les données météo de la réponse
+        try:
+            payload = resp.json() if resp else {}
+            weather_data = payload.get("data", [{}])[0] if payload.get("data") else {}
+        except Exception as e:
+            logging.error(f"Could not get reference weather for {date_str}: {e}")
+            continue  # Skip this entire date if the reference weather API call fails
+
+        if not weather_data:
+            logging.warning(
+                f"Reference weather data is empty for {date_str}. Skipping."
+            )
+            continue
+
+        # --- ÉTAPE 2: Construire la liste finale en parcourant TOUTES les communes ---
+        logging.info(f"Applying reference weather to all communes for {date_str}")
+        for commune_name, _, _ in communes:
+            # Récupérer le code de la commune. Si non trouvé, on ignore cette commune.
+            commune_code = commune_code_map.get(commune_name)
+            if not commune_code:
+                logging.warning(
+                    f"No code found for commune '{commune_name}'. Skipping."
+                )
                 continue
 
-            try:
-                payload = resp.json()
-            except Exception as e:
-                logging.error(f"JSON decode error for {commune} {date_str}: {e}")
-                continue
-
-            # One Call 3.0 timemachine returns an object with "data": [hourly entries].
-            # We'll take the first/only hourly entry (12:00 UTC).
-            wx = None
-            if isinstance(payload, dict):
-                if "data" in payload and isinstance(payload["data"], list) and payload["data"]:
-                    wx = payload["data"][0]
-                # Fallbacks if the structure differs (defensive)
-                elif "current" in payload and isinstance(payload["current"], dict):
-                    wx = payload["current"]
-
-            weather_data = wx if isinstance(wx, dict) else {}
-
-            curr_date_rows.append({
-                "commune": commune,
+            # Construire la ligne finale en combinant la météo unique et les infos de la commune ACTUELLE
+            new_row = {
+                "commune": commune_name,
+                "com": commune_code,
                 "date": date_str,
                 "temp": weather_data.get("temp"),
                 "feels_like": weather_data.get("feels_like"),
-                "temp_min": weather_data.get("temp", None),   # as requested
-                "temp_max": weather_data.get("temp", None),   # as requested
+                "temp_min": weather_data.get("temp"),
+                "temp_max": weather_data.get("temp"),
                 "pressure": weather_data.get("pressure"),
                 "humidity": weather_data.get("humidity"),
                 "wind_speed": weather_data.get("wind_speed"),
                 "clouds_all": weather_data.get("clouds"),
-            })
+            }
+            weather_rows.append(new_row)
 
-            time.sleep(per_call_sleep)
-
-        # Expand to all communes, copy weather data for each commune
-        communes_copy = list(communes)[1:]
-        curr_date_rows.extend([
-            {**row, "commune": commune}
-            for row in curr_date_rows for commune, _, _ in communes_copy
-        ])
-        weather_rows.extend(curr_date_rows)
+        time.sleep(per_call_sleep)
 
     return weather_rows
+
 
 def get_s3_hook():
     return S3Hook(aws_conn_id=S3_CONNECTION_ID)
 
+
 def load_geocoded_communes():
-    s3_path = S3_PATH
     s3_hook = get_s3_hook()
-    geocoded_communes_s3_key = f"{s3_path}/meta/{GEOCODED_COMMUNES_FILENAME}"
+    geocoded_communes_s3_key = f"{S3_PATH}/meta/{GEOCODED_COMMUNES_FILENAME}"
     local_geocoded_path = f"/tmp/s3_files/{GEOCODED_COMMUNES_FILENAME}"
-    s3_hook.get_key(key=geocoded_communes_s3_key, bucket_name=S3_BUCKET_NAME).download_file(local_geocoded_path)
+    s3_hook.get_key(
+        key=geocoded_communes_s3_key, bucket_name=S3_BUCKET_NAME
+    ).download_file(local_geocoded_path)
     df_communes = pd.read_csv(local_geocoded_path)
     return df_communes.to_dict(orient="records")
 
-def fetch_communes():
-    s3_hook = get_s3_hook()
-    s3_key = f"{S3_PATH}/meta/{COMMUNES_FILENAME}"
-    if s3_hook.check_for_key(key=s3_key, bucket_name=S3_BUCKET_NAME):
-        return
-    base_url = "https://geo.api.gouv.fr/departements"
-    save_dir = "/tmp/s3_files"
-    os.makedirs(save_dir, exist_ok=True)
-
-    all_communes = []
-    # Loop through all departments (1 to 95 for metropolitan France)
-    # for dept in range(1, 96):
-    for dept in [77]:
-        url = f"{base_url}/{dept}/communes"
-        params = {"fields": "nom,codeRegion,code,population", "format": "json"}
-        try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
-            communes = response.json()
-            all_communes.extend(communes)
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Error fetching data for department {dept}: {e}")
-
-    # Extract commune names and postal codes
-    data = []
-    for commune in all_communes:
-        nom_commune = commune["nom"]
-        code_region = commune["codeRegion"]
-        code = commune["code"]
-        population = commune["population"]
-        data.append([nom_commune, code_region, code, population])
-
-    # Create DataFrame
-    df_communes = pd.DataFrame(
-        data, columns=["commune", "code_region", "code", "population"]
-    )
-
-    # Save as CSV
-    save_path = os.path.join(save_dir, COMMUNES_FILENAME)
-    df_communes.to_csv(save_path, index=False, encoding="ISO-8859-1")
-
-    # Upload to S3
-    s3_hook.load_file(
-        filename=save_path,
-        key=s3_key,
-        bucket_name=S3_BUCKET_NAME,
-        replace=True,
-    )
-    logging.info(f"Communes file saved successfully: {save_path} -> {s3_key}")
 
 def fetch_geocodes():
     s3_hook = get_s3_hook()
@@ -215,7 +203,19 @@ def fetch_geocodes():
     geocoded_communes_s3_key = f"{S3_PATH}/meta/{GEOCODED_COMMUNES_FILENAME}"
     local_communes_path = f"/tmp/s3_files/{COMMUNES_FILENAME}"
     local_geocoded_path = f"/tmp/s3_files/{GEOCODED_COMMUNES_FILENAME}"
-    s3_hook.get_key(key=communes_s3_key, bucket_name=S3_BUCKET_NAME).download_file(local_communes_path)
+    if s3_hook.check_for_key(communes_s3_key, S3_BUCKET_NAME):
+        logging.info(f"Fichier trouvé : {communes_s3_key}")
+        s3_hook.get_key(key=communes_s3_key, bucket_name=S3_BUCKET_NAME).download_file(
+            local_communes_path
+        )
+    else:
+        logging.error(f"Fichier non trouvé : {communes_s3_key}")
+        raise FileNotFoundError(
+            f"L'objet {communes_s3_key} n'existe pas dans le bucket {S3_BUCKET_NAME}"
+        )
+    s3_hook.get_key(key=communes_s3_key, bucket_name=S3_BUCKET_NAME).download_file(
+        local_communes_path
+    )
     df_communes = pd.read_csv(local_communes_path)
     if not ("lat" in df_communes.columns and "lon" in df_communes.columns):
         df_communes["lat"] = None
@@ -246,5 +246,6 @@ def fetch_geocodes():
         bucket_name=S3_BUCKET_NAME,
         replace=True,
     )
-    logging.info(f"Geocoded communes file saved: {local_geocoded_path} -> {geocoded_communes_s3_key}")
-
+    logging.info(
+        f"Geocoded communes file saved: {local_geocoded_path} -> {geocoded_communes_s3_key}"
+    )

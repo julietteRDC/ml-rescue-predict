@@ -1,19 +1,21 @@
 import logging
-import boto3
 import time
 from datetime import datetime, timedelta
+
+import boto3
+import paramiko
+
 from airflow.decorators import task
+from airflow.exceptions import AirflowException
+from airflow.hooks.base import BaseHook
+from airflow.models import Variable
 from airflow.models.dag import DAG
 from airflow.providers.amazon.aws.operators.ec2 import (
     EC2CreateInstanceOperator,
     EC2TerminateInstanceOperator,
 )
-from airflow.exceptions import AirflowException
-from airflow.hooks.base import BaseHook
-import paramiko
-from airflow.utils.trigger_rule import TriggerRule
-from airflow.models import Variable
 from airflow.utils.task_group import TaskGroup
+from airflow.utils.trigger_rule import TriggerRule
 
 # Airflow connexions
 aws_conn = BaseHook.get_connection("aws_default")
@@ -44,14 +46,6 @@ MLFLOW_EXPERIMENT_ID = Variable.get("MLFLOW_EXPERIMENT_ID")
 MLFLOW_LOGGED_MODEL = Variable.get("MLFLOW_LOGGED_MODEL")
 AWS_ACCESS_KEY_ID = aws_access_key_id
 AWS_SECRET_ACCESS_KEY = aws_secret_access_key
-
-# SNOWFLAKE_USER = Variable.get("SNOWFLAKE_USER")
-# SNOWFLAKE_PASSWORD = Variable.get("SNOWFLAKE_PASSWORD")
-# SNOWFLAKE_ACCOUNT = Variable.get("SNOWFLAKE_ACCOUNT")
-# SNOWFLAKE_WAREHOUSE = Variable.get("SNOWFLAKE_WAREHOUSE")
-# SNOWFLAKE_SCHEMA = Variable.get("SNOWFLAKE_SCHEMA")
-# SNOWFLAKE_DATABASE = Variable.get("SNOWFLAKE_DATABASE")
-# SNOWFLAKE_ROLE = ""
 
 SNOWFLAKE_USER = snowflake_conn.login
 SNOWFLAKE_PASSWORD = snowflake_conn.password

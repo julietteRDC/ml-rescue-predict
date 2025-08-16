@@ -34,7 +34,7 @@ default_args = {"owner": "airflow", "start_date": days_ago(1)}
 dag = DAG(
     "mlflow_model_prediction_dag",
     default_args=default_args,
-    schedule_interval="0 0 * * *",
+    schedule_interval="0 6 * * *",
     catchup=False,
     tags=["predict"],
 )
@@ -66,8 +66,8 @@ def load_data_from_db(ti):
 
     query = """
         SELECT *
-        FROM rescue_predict_db.public."accidents"
-        WHERE "nombre_d_accidents" IS NULL
+        FROM rescue_predict_db.public."accidents_predict"
+        WHERE "prediction_score" IS NULL
         ORDER BY "an" ASC, "mois" ASC, "jour" ASC
     """
     # Exécution de la requête et conversion en DataFrame
@@ -89,9 +89,12 @@ def make_and_update_predictions(ti):
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
     # Load model
-    # model_uri = "runs:/e6a053ca43ba42f7b0ac613ae61c5a26/model"
-    model_uri = "models:/rescue-predict/1"
-    model = mlflow.pyfunc.load_model(model_uri)
+    model_uri = "models:/rescue-predict/2"
+
+    ### ### DÉBUT DE LA CORRECTION 1/2 ### ###
+    # Load the model using the scikit-learn flavor to get access to .predict_proba()
+    model = mlflow.sklearn.load_model(model_uri)
+    ### ### FIN DE LA CORRECTION 1/2 ### ###
 
     # Load data from XCom
     data_json = ti.xcom_pull(task_ids="load_data", key="data")
@@ -101,17 +104,21 @@ def make_and_update_predictions(ti):
         logging.info("No data to predict. Exiting prediction task.")
         return
 
-    # Ensure column names are consistent with what the model expects
-    # and what's in the database (often uppercased in Snowflake if not quoted)
-    df.columns = [col.upper() for col in df.columns]
-
     # Make predictions
-    # Drop the target column if it exists and is not an input feature for prediction
-    df_to_predict = df.drop(columns=["NOMBRE_D_ACCIDENTS"], errors="ignore")
-    df["ACCIDENT_PREDICT"] = model.predict(df_to_predict)
+    # The scikit-learn model expects the original column names (likely lowercase)
+    probabilites = model.predict_proba(
+        df.drop(columns=["nombre_d_accidents"], errors="ignore")
+    )
+    score_class = probabilites[:, 1]  # Probability of the positive class
+    df["prediction_score"] = score_class
+    df["prediction_score"] = (df["prediction_score"] * 100).round(4)
+
     ti.xcom_push(key="predict_data", value=df.to_json())
 
-    logging.info(f"xcom push predict data {df.to_json()}")
+    # Now, convert column names to uppercase for the database update
+    df.columns = [col.upper() for col in df.columns]
+
+    logging.info(f"Dernière ligne avec prediction :\n{df.tail(1)}")
 
     # Update the database
     snowflake_hook = SnowflakeHook(snowflake_conn_id="snowflake_rescue_predict_db")
@@ -119,19 +126,22 @@ def make_and_update_predictions(ti):
     try:
         with conn.cursor() as cursor:
             for _, row in df.iterrows():
-                update_query = f"""
-                    UPDATE rescue_predict_db.public."ACCIDENTS"
-                    SET "ACCIDENT_PREDICT" = %s
-                    WHERE "JOUR" = %s
-                      AND "MOIS" = %s
-                      AND "AN" = %s
-                      AND "DEP" = %s
-                      AND "COM" = %s
+                update_query = """
+                    UPDATE rescue_predict_db.public."accidents_predict"
+                    SET "prediction_score" = %s
+                    WHERE "jour" = %s
+                      AND "mois" = %s
+                      AND "an" = %s
+                      AND "dep" = %s
+                      AND "com" = %s
                 """
                 cursor.execute(
                     update_query,
                     (
-                        row["ACCIDENT_PREDICT"],
+                        ### ### DÉBUT DE LA CORRECTION 2/2 ### ###
+                        # The column name is PREDICTION_SCORE, not ACCIDENT_PREDICT
+                        row["PREDICTION_SCORE"],
+                        ### ### FIN DE LA CORRECTION 2/2 ### ###
                         int(row["JOUR"]),
                         int(row["MOIS"]),
                         int(row["AN"]),

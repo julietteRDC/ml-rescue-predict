@@ -41,9 +41,8 @@ class S3ToSnowflakeOperator(BaseOperator):
         snowflake_hook = SnowflakeHook(snowflake_conn_id="snowflake_rescue_predict_db")
         conn = snowflake_hook.get_conn()
         cursor = conn.cursor()
-        cursor.execute("CREATE OR REPLACE DATABASE rescue_predict_db")
+        cursor.execute("CREATE DATABASE IF NOT EXISTS rescue_predict_db")
         cursor.execute("USE DATABASE rescue_predict_db")
-        cursor.execute("CREATE SCHEMA IF NOT EXISTS public")
         cursor.execute("USE SCHEMA public")
         """Execute the transfer of data from S3 to Snowflake."""
         task_instance = context["task_instance"]

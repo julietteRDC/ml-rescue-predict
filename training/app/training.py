@@ -175,11 +175,16 @@ if __name__ == "__main__":
                 )
 
         logging.info("Evaluating model")
-        y_pred = pipeline.predict(X_test)
-        acc = accuracy_score(y_test, y_pred)
-        f1 = f1_score(
-            y_test, y_pred, average="weighted"
-        )  # Use 'weighted' for F1-score in binary classification with potential imbalance
+        y_pred_proba = pipeline.predict_proba(X_test)[:, 1]
+        y_pred_classes = (y_pred_proba >= 0.5).astype(int)
+        acc = accuracy_score(y_test, y_pred_classes)
+        f1 = f1_score(y_test, y_pred_classes, average="weighted")
+
+        # y_pred = pipeline.predict(X_test)
+        # acc = accuracy_score(y_test, y_pred)
+        # f1 = f1_score(
+        #     y_test, y_pred, average="weighted"
+        # )  # Use 'weighted' for F1-score in binary classification with potential imbalance
 
         logging.info(f"Accuracy: {acc:.4f}, F1 Score: {f1:.4f}")
         mlflow.log_metric("accuracy", acc)
@@ -190,7 +195,8 @@ if __name__ == "__main__":
         # input_example = X_train.iloc[:1].to_dict(orient="list")
         input_example = X_train.sample(5, random_state=42).to_dict(orient="list")
 
-        signature = infer_signature(X_train, pipeline.predict(X_train))
+        # signature = infer_signature(X_train, pipeline.predict(X_train))
+        signature = infer_signature(X_train, pipeline.predict_proba(X_train))
 
         # For mlflow V3 in server
         # mlflow.sklearn.log_model(
